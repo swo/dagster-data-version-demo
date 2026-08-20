@@ -1,29 +1,51 @@
+import dataclasses
 import datetime
 import pickle
+from pathlib import Path
 
 import dagster as dg
 
-USE_PICKLE = False
+USE_PICKLE = True
+CACHE_PATH = Path("tmp_one.pkl")
 
 
-@dg.asset
-def one() -> dg.MaterializeResult:
-    if USE_PICKLE:
-        with open("tmp_one.pkl", "rb") as f:
-            return pickle.load(f)
+@dataclasses.dataclass
+class VersionResult[T]:
+    version: str
+    value: T
+
+
+@dg.asset(code_version="v1")
+def one() -> dg.MaterializeResult[VersionResult[int]]:
+    if USE_PICKLE and CACHE_PATH.exists():
+        with CACHE_PATH.open("rb") as f:
+            cached_result = pickle.load(f)
+
+        version_result: VersionResult[int] = cached_result
     else:
-        timestamp = str(datetime.datetime.now(tz=datetime.UTC))
-        data_version = dg.DataVersion(timestamp)
-        return dg.MaterializeResult(data_version=data_version, value=1)
+        version = str(datetime.datetime.now(tz=datetime.UTC))
+        version_result = VersionResult(version=version, value=1)
 
+        with CACHE_PATH.open("wb") as f:
+            pickle.dump(version_result, f)
 
-@dg.asset
-def two(one: dg.MaterializeResult) -> dg.MaterializeResult:
     return dg.MaterializeResult(
-        data_version=one.data_version, value=one.value + one.value
+        data_version=dg.DataVersion(version_result.version), value=version_result
     )
 
 
+@dg.asset(code_version="v1")
+def two(one: int):
+    return one + one
+
+
+assets = dg.load_assets_from_current_module()
+defs = dg.Definitions(assets=assets)
+
 if __name__ == "__main__":
-    dg.load_assets_from_current_module()
-    print(dg.materialize_to_memory([two]))
+    result = dg.materialize(
+        [one, two],
+        run_config={"loggers": {"console": {"config": {"log_level": "INFO"}}}},
+    )
+    print(result.asset_value("one"))
+    print(result.asset_value("two"))

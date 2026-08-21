@@ -1,7 +1,7 @@
 .PHONY: dev run
 DAGSTER_HOME = $(shell pwd -P)/.dagster_home/
 
-demo:
+main:
 	uv run python main.py
 
 dev:
